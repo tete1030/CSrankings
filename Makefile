@@ -20,7 +20,7 @@ clean:
 csrankings.js: csrankings.ts
 	@echo "Rebuilding JavaScript code."
 	tsc --project tsconfig.json
-	closure-compiler --js csrankings.js > csrankings.min.js
+	google-closure-compiler --js csrankings.js > csrankings.min.js
 
 update-dblp:
 	$(MAKE) download-dblp

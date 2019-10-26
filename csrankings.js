@@ -170,6 +170,8 @@ class CSRankings {
         this.dblpAuthors = {};
         /* Map authors to the areas they have published in (for pie chart display). */
         this.authorAreas = {};
+        /* Map authors and years to the top areas they have published in (for stacked bar chart display). */
+        this.authorYearsTopAreas = {};
         /* Computed stats (univagg). */
         this.stats = {};
         this.areaDeptAdjustedCount = {}; /* area+dept */
@@ -315,7 +317,7 @@ class CSRankings {
     makePrologue() {
         const s = '<div class="table-responsive" style="overflow:auto; height:700px;">'
             + '<table class="table table-fit table-sm table-striped"'
-            + 'id="ranking" valign="top">';
+            + 'id="ranking" valign="top" style="width: 90%">';
         return s;
     }
     static sum(n) {
@@ -650,7 +652,7 @@ class CSRankings {
             header: true,
             complete: (results) => {
                 const data = results.data;
-                this.authors = data;
+                this.authors = data.filter((author) => (Boolean(author) && Boolean(author.name)));
                 for (let r in this.authors) {
                     let name = this.authors[r].name;
                 }
@@ -774,6 +776,7 @@ class CSRankings {
         const startyear = parseInt($("#fromyear").find(":selected").text());
         const endyear = parseInt($("#toyear").find(":selected").text());
         this.authorAreas = {};
+        this.authorYearsTopAreas = {};
         for (let r in this.authors) {
             let { area } = this.authors[r];
             if (area in CSRankings.nextTier) {
@@ -809,8 +812,20 @@ class CSRankings {
                     }
                 }
             }
+            if (!(name in this.authorYearsTopAreas)) {
+                this.authorYearsTopAreas[name] = {};
+                for (let i = startyear; i <= endyear; i++) {
+                    this.authorYearsTopAreas[name][i] = {};
+                    for (let area in CSRankings.topLevelAreas) {
+                        if (CSRankings.topLevelAreas.hasOwnProperty(area)) {
+                            this.authorYearsTopAreas[name][i][area] = 0;
+                        }
+                    }
+                }
+            }
             this.authorAreas[name][area] += theCount;
             this.authorAreas[dept][area] += theCount;
+            this.authorYearsTopAreas[name][year][(area in CSRankings.parentMap) ? CSRankings.parentMap[area] : area] += theCount;
         }
     }
     /* Build the dictionary of departments (and count) to be ranked. */
@@ -906,8 +921,176 @@ class CSRankings {
         }
         return numAreas;
     }
+    /* Updates the 'weights' of AI areas. */
+    /* Returns the number of AI areas. */
+    getAIWeights(weights) {
+        let numAreas = 0;
+        for (let ind = 0; ind < CSRankings.areas.length; ind++) {
+            let area = CSRankings.areas[ind];
+            weights[area] = (this.aiFields.indexOf(ind) > -1 || ((area in CSRankings.parentMap) && this.aiAreas.indexOf(CSRankings.parentMap[area]) > -1)) ? 1 : 0;
+            if (weights[area] === 1) {
+                if (area in CSRankings.parentMap) {
+                    // Don't count children.
+                    continue;
+                }
+                /* One more area checked. */
+                numAreas++;
+            }
+        }
+        return numAreas;
+    }
+    /* Updates the 'weights' of CV areas. */
+    /* Returns the number of CV areas. */
+    getCVWeights(weights) {
+        let numAreas = 0;
+        for (let ind = 0; ind < CSRankings.areas.length; ind++) {
+            let area = CSRankings.areas[ind];
+            weights[area] = (area == 'vision' || ((area in CSRankings.parentMap) && CSRankings.parentMap[area] == 'vision')) ? 1 : 0;
+            if (weights[area] === 1) {
+                if (area in CSRankings.parentMap) {
+                    // Don't count children.
+                    continue;
+                }
+                /* One more area checked. */
+                numAreas++;
+            }
+        }
+        return numAreas;
+    }
+    /* Updates the 'weights' of All areas. */
+    /* Returns the number of All areas. */
+    getAllWeights(weights) {
+        let numAreas = 0;
+        for (let ind = 0; ind < CSRankings.areas.length; ind++) {
+            let area = CSRankings.areas[ind];
+            weights[area] = 1;
+            if (area in CSRankings.parentMap) {
+                // Don't count children.
+                continue;
+            }
+            /* One more area checked. */
+            numAreas++;
+        }
+        return numAreas;
+    }
+    buildAdditionalFacultyData(startyear, endyear, whichRegions, cv, ai, all) {
+        var weights;
+        var facultycount; /* name -> raw count of pubs per name / department */
+        let result = {};
+        if (cv) {
+            weights = {};
+            facultycount = {};
+            this.getCVWeights(weights);
+            this.buildDepartments(startyear, endyear, weights, whichRegions, {}, {}, facultycount, {});
+            result["#CVPubs"] = facultycount;
+        }
+        if (ai) {
+            weights = {};
+            facultycount = {};
+            this.getAIWeights(weights);
+            this.buildDepartments(startyear, endyear, weights, whichRegions, {}, {}, facultycount, {});
+            result["#AIPubs"] = facultycount;
+        }
+        if (all) {
+            weights = {};
+            facultycount = {};
+            this.getAllWeights(weights);
+            this.buildDepartments(startyear, endyear, weights, whichRegions, {}, {}, facultycount, {});
+            result["#CSPubs"] = facultycount;
+        }
+        return result;
+    }
+    extractPubsTrendData(name) {
+        if (!(name in this.authorYearsTopAreas)) {
+            // Defensive programming.
+            // This should only happen if we have an error in the aliases file.
+            return { data: [], years: [] };
+        }
+        let allYears = Object.keys(this.authorYearsTopAreas[name]).map(x => String(x));
+        let data = Object.keys(CSRankings.topLevelAreas).map((toparea) => allYears.map((year) => ({
+            x: String(year),
+            y: this.authorYearsTopAreas[name][parseInt(year)][toparea],
+            area: toparea
+        })));
+        return { data: data, years: allYears };
+    }
+    makePubsTrendChart(element, name, margin) {
+        if ($(element).find('svg').length > 0)
+            return;
+        const offsetWidth = element.offsetWidth;
+        const offsetHeight = element.offsetHeight;
+        const contentWidth = offsetWidth - margin - margin;
+        const contentHeight = offsetHeight - margin - margin;
+        let color = d3.scale.ordinal().range(Object.keys(CSRankings.topLevelAreas).map((k) => this.color[CSRankings.parentIndex[k]]));
+        let x = d3.scale.ordinal().rangeRoundBands([0, contentWidth], .05);
+        let y = d3.scale.linear().range([contentHeight, 0]);
+        // let xAxis = d3.svg.axis()
+        // 	.scale(x)
+        // 	.orient("bottom");
+        // let yAxis = d3.svg.axis()
+        // 	.scale(y)
+        // 	.orient("left")
+        // 	.ticks(2);
+        let stack = d3.layout
+            .stack();
+        let svg = d3.select(element).append("svg")
+            .attr("width", offsetWidth)
+            .attr("height", offsetHeight)
+            .append("g")
+            .attr("transform", "translate(" + margin + "," + margin + ")");
+        let { data: data, years: allYears } = this.extractPubsTrendData(name);
+        let stackedData = stack(data);
+        color.domain(Object.keys(CSRankings.topLevelAreas));
+        x.domain(allYears);
+        y.domain([0, d3.max(stackedData[stackedData.length - 1], function (d) { return d.y0 + d.y; })]);
+        // svg.append("g")
+        // 	.attr("class", "x-axis")
+        // 	.attr("transform", "translate(0," + contentHeight + ")")
+        // 	.call(xAxis)
+        //   .selectAll("text")
+        // 	.style("text-anchor", "end")
+        // 	.attr("dx", "-.8em")
+        // 	.attr("dy", "-.55em")
+        // 	.attr("transform", "rotate(-90)" );
+        // svg.append("g")
+        // 	.attr("class", "y-axis")
+        // 	.call(yAxis)
+        //   .append("text")
+        // 	.attr("transform", "rotate(-90)")
+        // 	.attr("y", 6)
+        // 	.attr("dy", ".71em")
+        // 	.style("text-anchor", "end")
+        // 	.text("Count");
+        let years = svg.selectAll(".pub-areas")
+            .data(stackedData)
+            .enter().append("g")
+            .attr("class", "pub-areas")
+            .style("fill", function (_d, i) { return color(Object.keys(CSRankings.topLevelAreas)[i]); });
+        let rectangles = years.selectAll("rect")
+            .data(function (d) {
+            // console.log("array for a rectangle");
+            return d;
+        }) // this just gets the array for bar segment.
+            .enter().append("rect")
+            .attr("width", x.rangeBand())
+            .attr("x", function (d) {
+            return x(d.x);
+        })
+            .attr("y", function (d) {
+            return y(d.y0 + d.y);
+        }) //
+            .attr("height", function (d) {
+            return y(d.y0) - y(d.y0 + d.y);
+        }); // height is base - tallness
+    }
+    buildPubsTrendChart(deptElement) {
+        $(deptElement).find(".facultystackedchart").each((_i, facultyElement) => {
+            let facultyName = unescape(facultyElement.id.substring(0, facultyElement.id.length - "-stackedchart".length));
+            this.makePubsTrendChart(facultyElement, facultyName, 0);
+        });
+    }
     /* Build drop down for faculty names and paper counts. */
-    buildDropDown(deptNames, facultycount, facultyAdjustedCount) {
+    buildDropDown(deptNames, facultycount, facultyAdjustedCount, additionalFacultyData) {
         let univtext = {};
         for (let dept in deptNames) {
             if (!deptNames.hasOwnProperty(dept)) {
@@ -915,9 +1098,11 @@ class CSRankings {
             }
             let p = '<div class="table"><table class="table table-sm table-striped"><thead><th></th><td><small><em>'
                 + '<abbr title="Click on an author\'s name to go to their home page.">Faculty</abbr></em></small></td>'
-                + '<td align="right"><small><em>&nbsp;&nbsp;<abbr title="Total number of publications (click for DBLP entry).">\#&nbsp;Pubs</abbr>'
-                + ' </em></small></td><td align="right"><small><em><abbr title="Count divided by number of co-authors">Adj.&nbsp;\#</abbr></em>'
-                + '</small></td></thead><tbody>';
+                + '<td style="text-align: right"><small><em>&nbsp;&nbsp;<abbr title="Total number of publications (click for DBLP entry).">\#&nbsp;Pubs</abbr>'
+                + ' </em></small></td><td style="text-align: right"><small><em><abbr title="Count divided by number of co-authors">Adj.&nbsp;\#</abbr></em>'
+                + '</small></td>'
+                + Object.keys(additionalFacultyData).map(x => `<td style="text-align: right"><small><em><abbr>${x}</abbr></em></small></td>`).join('')
+                + '</thead><tbody>';
             /* Build a dict of just faculty from this department for sorting purposes. */
             let fc = {};
             for (let name of deptNames[dept]) {
@@ -992,9 +1177,9 @@ class CSRankings {
                     + '<img alt="DBLP" src="dblp.png">'
                     + '</a>';
                 p += "<span onclick='csr.toggleChart(\"" + escape(name) + "\");' title=\"Click for author's publication profile.\" class=\"hovertip\" id=\"" + escape(name) + "-chartwidget\">"
-                    + "<font size=\"+1\">" + this.PieChart + "</font></span>"
-                    + '</small>'
-                    + '</td><td align="right"><small>'
+                    + "<font size=\"+1\">" + this.PieChart + "</font></span>";
+                p += `<div style="width: 60px; height: 16px; float: right;" class="facultystackedchart" id="${escape(name)}-stackedchart"></div>`;
+                p += '</small></td><td  style="text-align: right"><small>'
                     + '<a title="Click for author\'s DBLP entry." target="_blank" href="'
                     + dblpName
                     + '" '
@@ -1005,9 +1190,11 @@ class CSRankings {
                     + fc[name]
                     + '</a>'
                     + "</small></td>"
-                    + '<td align="right"><small>'
+                    + '<td style="text-align: right"><small>'
                     + (Math.round(10.0 * facultyAdjustedCount[name]) / 10.0).toFixed(1)
-                    + "</small></td></tr>"
+                    + '</small></td>'
+                    + Object.keys(additionalFacultyData).map(x => `<td style="text-align: right"><small>${additionalFacultyData[x][name] || 0}</small></td>`).join('')
+                    + '</tr>'
                     + "<tr><td colspan=\"4\">"
                     + '<div style="display:none;" id="' + escape(name) + "-chart" + '">'
                     + '</div>'
@@ -1021,9 +1208,9 @@ class CSRankings {
     buildOutputString(numAreas, deptCounts, univtext, minToRank) {
         let s = this.makePrologue();
         /* Show the top N (with more if tied at the end) */
-        s = s + '<thead><tr><th align="left"><font color="#777">#</font></th><th align="left"><font color="#777">Institution</font></th><th align="right">'
+        s = s + '<thead><tr><th align="left"><font color="#777">#</font></th><th align="left"><font color="#777">Institution</font></th><th style="text-align: right">'
             + '<abbr title="Geometric mean count of papers published across all areas."><font color="#777">Count</font>'
-            + '</abbr></th><th align="right">&nbsp;<abbr title="Number of faculty who have published in these areas."><font color="#777">Faculty</font>'
+            + '</abbr></th><th style="text-align: right">&nbsp;<abbr title="Number of faculty who have published in these areas."><font color="#777">Faculty</font>'
             + '</abbr></th></th></tr></thead>';
         s = s + "<tbody>";
         /* As long as there is at least one thing selected, compute and display a ranking. */
@@ -1071,8 +1258,8 @@ class CSRankings {
                     + "<span class=\"hovertip\" onclick=\"csr.toggleChart('" + esc + "');\" id=\"" + esc + "-chartwidget\">"
                     + this.PieChart + "</span>";
                 s += "</td>";
-                s += '<td align="right">' + (Math.round(10.0 * v) / 10.0).toFixed(1) + "</td>";
-                s += '<td align="right">' + deptCounts[dept]; /* number of faculty */
+                s += '<td style="text-align: right">' + (Math.round(10.0 * v) / 10.0).toFixed(1) + "</td>";
+                s += '<td style="text-align: right">' + deptCounts[dept]; /* number of faculty */
                 s += "</td>";
                 s += "</tr>\n";
                 s += '<tr><td colspan="4"><div style="display:none;" style="width: 100%; height: 350px;" id="'
@@ -1139,7 +1326,7 @@ class CSRankings {
         this.buildDepartments(startyear, endyear, currentWeights, whichRegions, deptCounts, deptNames, facultycount, facultyAdjustedCount);
         /* (university, total or average number of papers) */
         this.computeStats(deptNames, numAreas, currentWeights);
-        const univtext = this.buildDropDown(deptNames, facultycount, facultyAdjustedCount);
+        const univtext = this.buildDropDown(deptNames, facultycount, facultyAdjustedCount, this.buildAdditionalFacultyData(startyear, endyear, whichRegions, true, true, true));
         /* Start building up the string to output. */
         const s = this.buildOutputString(numAreas, deptCounts, univtext, CSRankings.minToRank);
         /* Finally done. Redraw! */
@@ -1195,6 +1382,7 @@ class CSRankings {
             widget.innerHTML = "<font color=\"blue\">" + this.DownTriangle + "</font>";
         }
     }
+    // TODO: Save this in url
     /* Expand or collape the view of all faculty in a department. */
     toggleFaculty(dept) {
         const e = document.getElementById(dept + "-faculty");
@@ -1206,6 +1394,7 @@ class CSRankings {
         else {
             e.style.display = 'block';
             widget.innerHTML = "<font color=\"blue\">" + this.DownTriangle + "</font>";
+            CSRankings.promise(() => this.buildPubsTrendChart(e));
         }
     }
     activateAll(value = true) {
