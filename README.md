@@ -10,6 +10,12 @@ This is a modified version of CSrankings for my personal usage. It has the follo
 
 You can modify the code to suit your own needs. If you want me to help you improve it, feel free to submit an issue.
 
+## Publication Graph
+
+The color set of the graph is the same as the set of pie charts used in original CSrankings. To find out what a color means, you can click each professor's or university's pie chart icon.
+
+The horizontal axis stands for year. The vertical axis is the number of publications, which is normalized by the maximum number of the professor's yearly publications (This design is intended to focus on the trending of each professor, instead of comparison of professors).
+
 Computer Science Rankings
 =========================
 
