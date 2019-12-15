@@ -1,3 +1,15 @@
+Modified CSrankings
+=========================
+
+![image](https://user-images.githubusercontent.com/4312115/70861994-14443000-1f71-11ea-993b-cec3d79c2167.png)
+
+This is a modified version of CSrankings for my personal usage. It has the following changes and improvements:
+
+1. Graphs of each professor's publications in all fields
+2. Number of CV sub-area, AI area and all CS publications (No matter which areas you have selected in the left panel)
+
+You can modify the code to suit your own needs. If you want me to help you improve it, feel free to submit an issue.
+
 Computer Science Rankings
 =========================
 
